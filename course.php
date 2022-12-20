@@ -52,4 +52,41 @@
 		}
 
 	}
+
+	public function getAssociatedFiles()
+	{
+		$db = JFactory::getDbo();
+		$query = $db->getQuery(true);
+		$query->select('m.id as mediaId, m.source, m.org_filename, af.lesson_id');
+		$query->from($db->qn('#__tjlms_media', 'm'));
+		$query->join('INNER', $db->qn('#__tjlms_associated_files', 'af') . ' ON (' . $db->qn('af.media_id') . ' = ' . $db->qn('m.id') . ')');
+		$query->join('INNER', $db->qn('#__tjlms_lessons', 'l') . ' ON (' . $db->qn('l.id') . ' = ' . $db->qn('af.lesson_id') . ')');
+		$query->where($db->qn('m.format') . '=' . $db->q('associate'));
+		$db->setQuery($query);
+
+		$lessonMedia = $db->loadObjectList();
+
+		$fp = fopen(JPATH_ROOT . '/media/com_tjlms' . "/associateFiles.txt","wb");
+
+		foreach ($lessonMedia as $media)
+		{
+			if (file_exists(JPATH_ROOT . '/media/com_tjlms/lessons/'. $media->source))
+			{
+				$content = $media->source . " is present " . $media->org_filename . " Lesson Id " . $media->lesson_id . "\n";
+				fwrite($fp,$content);
+			}
+			elseif (file_exists(JPATH_ROOT . '/media/com_tjlms/bkp_lesson/lessons/'. $media->source))
+			{
+				$content = $media->source . " is present in backup" . "\n";
+				fwrite($fp,$content);
+			}
+			else
+			{
+				$content = $media->source . " is absent => original file name is ". $media->org_filename . "Lesson Id " . $media->lesson_id . "\n";
+				fwrite($fp,$content);
+			}
+		}
+
+		fclose($fp);
+	}
 }
