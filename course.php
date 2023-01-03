@@ -91,7 +91,7 @@
 	}
 
 
-	public function completeStatus()
+	public function generateCertificateWithLessontrack()
 	{
 		// Lesson is passed but course is not completed and not get certificates.
 
@@ -125,7 +125,10 @@
 			$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->timeend);
 		}
 
+	}
 
+	public function generateCertificateWithOutLessontrack()
+	{
 		//Who are course completed but not in lesson track.
 
 		$db = JFactory::getDbo();
@@ -167,9 +170,8 @@
 				$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->enrolled_on_time);
 
 				print_r($result);
-				die("hereeeeeeeeeee");
+				die("here");
 			}
 		}
-
 	}
 }
