@@ -93,16 +93,18 @@
 
 	public function completeStatus()
 	{
+		// Lesson is passed but course is not completed and not get certificates.
+
 		$db = JFactory::getDbo();
 		$query = $db->getQuery(true);
-		$query->select(array('lt.user_id,ct.status,ct.no_of_lessons,ct.completed_lessons,ct.course_id'));
+		$query->select(array('lt.user_id,ct.status,ct.no_of_lessons,ct.completed_lessons,ct.course_id,lt.timeend'));
 		$query->from('#__tjlms_lesson_track AS lt');
 		$query->join('inner', '#__tjlms_lessons AS l ON l.id=lt.lesson_id');
 		$query->join('inner', '#__tjlms_course_track AS ct ON ct.user_id=lt.user_id');
 		$query->where('lt.lesson_id = ' . (int) 87);
-		$query->where('lt.lesson_status = ' . $db->q('passed'));
-		$query->where('ct.course_id = ' . $db->q('25'));
-		$query->where('ct.status = ' . $db->q(''));
+		$query->where('lt.lesson_status = ' . $db->q("passed"));
+		$query->where('ct.course_id = ' . $db->q("25"));
+		$query->where('ct.status = ' . $db->q(""));
 		$db->setQuery($query);
 		$userData = $db->loadObjectList();
 
@@ -112,10 +114,61 @@
 			$query->update($db->qn('#__tjlms_course_track','ct'));
 			$query->set($db->qn('ct.completed_lessons') . '=' . $db->q((int) $data->no_of_lessons));
 			$query->set($db->qn('ct.status') . '=' . $db->q('C'));
+			$query->set($db->qn('ct.timeend') . '=' . $db->q($data->timeend));
 			$query->where($db->qn('ct.user_id') . '=' . $db->q((int) $data->user_id));
 			$query->where($db->qn('ct.course_id') . '=' . $db->q((int) $data->course_id));
 			$db->setQuery($query);
 			$db->execute();
+
+			JLoader::import('components.com_tjlms.models.course', JPATH_SITE);
+			$tjlmsModelcourse = BaseDatabaseModel::getInstance('Course', 'TjlmsModel', array('ignore_request' => true));
+			$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->timeend);
+		}
+
+
+		//Who are course completed but not in lesson track.
+
+		$db = JFactory::getDbo();
+		$query = $db->getQuery(true);
+		$query->select(array('ct.user_id,ct.status,ct.no_of_lessons,ct.completed_lessons,ct.course_id,en.enrolled_on_time'));
+		$query->from('#__tjlms_course_track AS ct');
+		$query->join('LEFT', '#__tjlms_enrolled_users AS en ON en.user_id=ct.user_id');
+		$query->where($db->qn('ct.course_id') . '=' . $db->q("25"));
+		$query->where($db->qn('ct.status') . '=' . $db->q("C"));
+		$query->group($db->qn('ct.user_id'));
+		$db->setQuery($query);
+		$userData = $db->loadObjectList();
+
+		foreach ($userData as $key => $data)
+		{
+			$db = JFactory::getDbo();
+			$query = $db->getQuery(true);
+			$query->select(array('lt.id'));
+			$query->from('#__tjlms_lesson_track AS lt');
+			$query->where('lt.lesson_id = ' . $db->q("87"));
+			$query->where('lt.user_id = ' . $db->q($data->user_id));
+			$db->setQuery($query);
+			$userLtData = $db->loadObject();
+
+			if (empty($userLtData->id))
+			{
+				$query = $db->getQuery(true);
+				$query->update($db->qn('#__tjlms_course_track','ct'));
+				$query->set($db->qn('ct.completed_lessons') . '=' . $db->q((int) $data->no_of_lessons));
+				$query->set($db->qn('ct.status') . '=' . $db->q('C'));
+				$query->set($db->qn('ct.timeend') . '=' . $db->q($data->enrolled_on_time));
+				$query->where($db->qn('ct.user_id') . '=' . $db->q((int) $data->user_id));
+				$query->where($db->qn('ct.course_id') . '=' . $db->q((int) $data->course_id));
+				$db->setQuery($query);
+				$db->execute();
+
+				JLoader::import('components.com_tjlms.models.course', JPATH_SITE);
+				$tjlmsModelcourse = BaseDatabaseModel::getInstance('Course', 'TjlmsModel', array('ignore_request' => true));
+				$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->enrolled_on_time);
+
+				print_r($result);
+				die("hereeeeeeeeeee");
+			}
 		}
 
 	}
