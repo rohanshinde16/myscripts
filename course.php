@@ -93,6 +93,9 @@
 
 	public function generateCertificateWithLessontrack()
 	{
+		// Need to change in below fine for certificate issued date
+		// SITE_NAME/components/com_tjlms/models/course.php
+
 		// Lesson is passed but course is not completed and not get certificates.
 
 		$db = JFactory::getDbo();
@@ -122,6 +125,9 @@
 
 			JLoader::import('components.com_tjlms.models.course', JPATH_SITE);
 			$tjlmsModelcourse = BaseDatabaseModel::getInstance('Course', 'TjlmsModel', array('ignore_request' => true));
+			
+			// Need to change in below fine for certificate issued date
+			// SITE_NAME/components/com_tjlms/models/course.php
 			$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->timeend);
 		}
 
@@ -130,6 +136,8 @@
 	public function generateCertificateWithOutLessontrack()
 	{
 		//Who are course completed but not in lesson track.
+		// Need to change in below fine for certificate issued date
+		// SITE_NAME/components/com_tjlms/models/course.php
 
 		$db = JFactory::getDbo();
 		$query = $db->getQuery(true);
@@ -167,6 +175,10 @@
 
 				JLoader::import('components.com_tjlms.models.course', JPATH_SITE);
 				$tjlmsModelcourse = BaseDatabaseModel::getInstance('Course', 'TjlmsModel', array('ignore_request' => true));
+				
+				// Need to change in below fine for certificate issued date
+				// SITE_NAME/components/com_tjlms/models/course.php
+				
 				$result = $tjlmsModelcourse->addCertEntry($data->course_id, $data->user_id, $data->enrolled_on_time);
 
 				print_r($result);
