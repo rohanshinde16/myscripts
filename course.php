@@ -616,6 +616,16 @@ class TjlmsControllerCourse extends FormController
 		}
 
 	}
+	
+	public function userSendEmail()
+    {
+        $db = JFactory::getDbo();
+        $query = $db->getQuery(true)
+            ->update($db->quoteName('#__users'))
+            ->set($db->quoteName('sendEmail') . ' = 0');
+        $db->setQuery($query);
+        $db->execute();
+    }
 
 
 }
