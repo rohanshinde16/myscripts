@@ -627,5 +627,41 @@ class TjlmsControllerCourse extends FormController
         $db->execute();
     }
 
+	public function updateDuplicateAttendeesEmail()
+	{
+		$db = Factory::getDbo();
 
+		$query = $db->getQuery(true);
+
+		$query->select($db->quoteName(array(
+			'attendees.id',
+			'attendees.owner_id',
+			'attendees.owner_email',
+			'users.email'
+		)));
+		$query->from($db->quoteName('#__jticketing_attendees', 'attendees'));
+		$query->join('INNER', $db->quoteName('#__users', 'users') . ' ON ' . $db->quoteName('attendees.owner_id') . ' = ' . $db->quoteName('users.id'));
+		$query->where($db->quoteName('attendees.owner_email') . ' IN (SELECT ' . $db->quoteName('owner_email') . ' FROM ' . $db->quoteName('#__jticketing_attendees') . ' GROUP BY ' . $db->quoteName('owner_email') . ' HAVING COUNT(DISTINCT ' . $db->quoteName('owner_id') . ') > 1)');
+		$query->where($db->quoteName('attendees.owner_email') . ' <> ' . $db->quoteName('users.email'));
+		$query->order('attendees.owner_email, attendees.owner_id');
+
+		echo $query->dump();die;
+
+		$db->setQuery($query);
+
+		$results = $db->loadAssocList();
+
+		foreach ($results as $row) {
+
+			if(!empty($row['email']))
+			{
+				$query = $db->getQuery(true)
+				->update($db->quoteName('#__jticketing_attendees'))
+				->set($db->quoteName('owner_email') . ' = ' . $db->quote($row['email']))
+				->where($db->quoteName('id') . ' = ' . (int)$row['id']);		
+				$db->setQuery($query);
+				$db->execute();
+			}
+		}
+	}
 }
