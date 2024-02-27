@@ -34,8 +34,31 @@ WHERE `parent_event` IN (
 )
 GROUP BY id, title;
 
+=======================================
+SELECT 
+    u.name AS UserOfName,
+    u.email AS userEmail,
+    c.title AS CourseName,
+    CASE 
+        WHEN track.status = 'I' THEN 'Incomplete'
+        WHEN track.status = 'C' THEN 'Complete'
+        ELSE ''
+    END AS CourseStatus
+FROM 
+    zdklo_users AS u
+JOIN 
+    zdklo_tjlms_enrolled_users AS eu ON u.id = eu.user_id
+JOIN 
+    zdklo_tjlms_courses AS c ON c.id = eu.course_id
+JOIN 
+    zdklo_tjlms_course_track AS track ON track.user_id = eu.user_id AND track.course_id = eu.course_id
+WHERE 
+    u.email IN (
+        'homa.ms2019@gmail.com',
+        'asmatanweer@gmail.com'
+        );
 
-
+===========================================
 
 du -hs * | sort -hr
 
