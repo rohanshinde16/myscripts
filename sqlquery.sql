@@ -43,7 +43,10 @@ SELECT
         WHEN track.status = 'I' THEN 'Incomplete'
         WHEN track.status = 'C' THEN 'Complete'
         ELSE ''
-    END AS CourseStatus
+    END AS CourseStatus,
+    tjm.title AS Enterprsie,
+    eu.enrolled_on_time AS EnrollmentDate,
+    track.timeend AS CompletionDate
 FROM 
     zdklo_users AS u
 JOIN 
@@ -52,11 +55,16 @@ JOIN
     zdklo_tjlms_courses AS c ON c.id = eu.course_id
 JOIN 
     zdklo_tjlms_course_track AS track ON track.user_id = eu.user_id AND track.course_id = eu.course_id
+
+INNER JOIN
+    zdklo_hierarchy_users AS hu ON u.id=hu.user_id
+
+LEFT JOIN
+    zdklo_tjmultiagency_multiagency AS tjm ON tjm.manager_id=hu.reports_to
 WHERE 
     u.email IN (
         'homa.ms2019@gmail.com',
-        'asmatanweer@gmail.com'
-        );
+        'asmatanweer@gmail.com');
 
 ===========================================
 
