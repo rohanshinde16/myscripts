@@ -664,4 +664,390 @@ class TjlmsControllerCourse extends FormController
 			}
 		}
 	}
+
+	public function mergeUsers()
+	{
+		// Get Joomla DB and input
+		$app = \Joomla\CMS\Factory::getApplication();
+		$db    = \Joomla\CMS\Factory::getDbo();
+		$input = \Joomla\CMS\Factory::getApplication()->input;
+
+		// Get user IDs from URL
+		$userFrom = (int) $input->getInt('user_from');
+		$userTo   = (int) $input->getInt('user_to');
+
+		$csvPath = JPATH_SITE . '/components/com_tjlms/controllers/BDO_users.csv';
+
+		if (!file_exists($csvPath)) {
+            $app->enqueueMessage("CSV file not found: $csvPath", 'error');
+            return;
+        }
+
+		$duplicateUserIds = [];
+		$originalUserIds = [];
+
+		if (($handle = fopen($csvPath, "r")) !== false) {
+            $header = fgetcsv($handle); // read header
+            while (($data = fgetcsv($handle)) !== false) {
+                $row = array_combine($header, $data);
+
+                $duplicateEmail = trim($row['duplicateEmail']);
+                $originalEmail = trim($row['originalEmail']);
+
+				if (!$duplicateEmail || !$originalEmail) {
+                    continue;
+                }
+
+				$duplicateEmailUserData = $this->getUser($duplicateEmail);
+				$originalEmailUserData = $this->getUser($originalEmail);
+
+				$rows = $this->mergeTjlmsUserLMSData($duplicateEmailUserData->id, $originalEmailUserData->id);
+				$rows = $this->mergeJTUserLMSData($duplicateEmailUserData->id, $originalEmailUserData->id, $originalEmailUserData->email);
+				$rows = $this->mergeJlikeUserLMSData($duplicateEmailUserData->id, $originalEmailUserData->id);
+				// print_r($dupicateEmailUserData->email);echo " : "; print_r($originalEmailUserData->email);echo "\n";
+
+				$duplicateUserIds[] = $duplicateEmailUserData->id;
+				$originalUserIds[] = $originalEmailUserData->id;
+            }
+            fclose($handle);
+			print_r("User data merged successfully.\n");
+			echo "<pre>";print_r($duplicateUserIds);echo "\n";
+			echo "<pre>";print_r($originalUserIds);;
+			$app->enqueueMessage("User data merged successfully.", 'message');
+        } else {
+            $app->enqueueMessage("Unable to open CSV file", 'error');
+        }
+	}
+
+	/**
+	 * Returns userid if a user exists
+	 *
+	 * @param   string  $email  The email to search on.
+	 *
+	 * @return  Object
+	 *
+	 * @since   11.1
+	 */
+	public function getUser($email)
+	{
+		$this->_db = Factory::getDbo();
+		$query = $this->_db->getQuery(true);
+		$query->select('u.*');
+		$query->from($this->_db->qn('#__users', 'u'));
+		$query->where($this->_db->qn('u.email') . '=' . $this->_db->q($email));
+		$this->_db->setQuery($query);
+
+		return $this->_db->loadobject();
+	}
+
+	/**
+	 * Returns userid if a user exists
+	 *
+	 * @param   string  $email  The email to search on.
+	 *
+	 * @return  Object
+	 *
+	 * @since   11.1
+	 */
+	public function mergeTjlmsUserLMSData($user1Id, $user2Id)
+	{
+		$db = \Joomla\CMS\Factory::getDbo();
+
+		// Step 1: Deactivate enrollments where both users are enrolled in same course
+		$query = $db->getQuery(true)
+			->select('a.course_id')
+			->from($db->quoteName('#__tjlms_enrolled_users', 'a'))
+			->join('INNER', $db->quoteName('#__tjlms_enrolled_users', 'b') . ' ON a.course_id = b.course_id')
+			->where('a.user_id = ' . (int)$user1Id)
+			->where('b.user_id = ' . (int)$user2Id);
+		$db->setQuery($query);
+		$commonCourses = $db->loadColumn();
+
+		if (!empty($commonCourses)) {
+			$query = $db->getQuery(true)
+				->update($db->quoteName('#__tjlms_enrolled_users'))
+				->set('state = 0')
+				->where('user_id = ' . (int)$user1Id)
+				->where('course_id IN (' . implode(',', array_map('intval', $commonCourses)) . ')');
+			$db->setQuery($query)->execute();
+		}
+
+		// Step 2: Get all course_ids user2 already has in enrolled_users and course_track
+		$existingCourses = [];
+
+		$migrationTables = [
+			['table' => '#__tjlms_enrolled_users', 'user_field' => 'user_id', 'course_field' => 'course_id'],
+			['table' => '#__tjlms_course_track', 'user_field' => 'user_id', 'course_field' => 'course_id'],
+		];
+
+		foreach ($migrationTables as $tbl) {
+			$query = $db->getQuery(true)
+				->select($db->quoteName($tbl['course_field']))
+				->from($db->quoteName($tbl['table']))
+				->where($db->quoteName($tbl['user_field']) . ' = ' . (int)$user2Id);
+			$db->setQuery($query);
+			$courses = $db->loadColumn();
+			$existingCourses[$tbl['table']] = !empty($courses) ? array_map('intval', $courses) : [];
+		}
+
+		// Step 3: Safely update only non-conflicting course entries
+		foreach ($migrationTables as $tbl) {
+			$skipCourses = $existingCourses[$tbl['table']];
+			$skipClause = !empty($skipCourses)
+				? ' AND ' . $tbl['course_field'] . ' NOT IN (' . implode(',', $skipCourses) . ')'
+				: '';
+
+			$query = $db->getQuery(true)
+				->update($db->quoteName($tbl['table']))
+				->set($db->quoteName($tbl['user_field']) . ' = ' . (int)$user2Id)
+				->where($db->quoteName($tbl['user_field']) . ' = ' . (int)$user1Id . $skipClause);
+			$db->setQuery($query)->execute();
+		}
+
+		// Step 4: Migrate lesson_track (no course_id, so transfer all)
+			$query = $db->getQuery(true)
+				->select(['id', 'lesson_id', 'attempt']) // Add any other fields used in UNIQUE KEY
+				->from($db->quoteName('#__tjlms_lesson_track'))
+				->where('user_id = ' . (int)$user1Id);
+			$db->setQuery($query);
+			$lessonTracks = $db->loadObjectList();
+
+			foreach ($lessonTracks as $track) {
+				$checkQuery = $db->getQuery(true)
+					->select('id')
+					->from($db->quoteName('#__tjlms_lesson_track'))
+					->where('user_id = ' . (int)$user2Id)
+					->where('lesson_id = ' . (int)$track->lesson_id)
+					->where('attempt = ' . (int)$track->attempt);
+				$db->setQuery($checkQuery);
+				$exists = $db->loadResult();
+
+				if (!$exists) {
+					$updateQuery = $db->getQuery(true)
+						->update($db->quoteName('#__tjlms_lesson_track'))
+						->set('user_id = ' . (int)$user2Id)
+						->where('id = ' . (int)$track->id);
+					$db->setQuery($updateQuery)->execute();
+				}
+			}
+
+		// Step 5: Migrate selected activities only if not duplicate COURSE_COMPLETED
+		$allowedActions = ['COURSE_COMPLETED', 'ENROLL', 'ATTEMPT', 'ATTEMPT_END'];
+
+		// Get existing COURSE_COMPLETED entries for user2
+		$query = $db->getQuery(true)
+			->select('element_id')
+			->from($db->quoteName('#__tjlms_activities'))
+			->where('actor_id = ' . (int)$user2Id)
+			->where("action = 'COURSE_COMPLETED'");
+		$db->setQuery($query);
+		$user2Completed = array_map('intval', $db->loadColumn());
+
+		// Build condition
+		$actionList = implode("','", array_map([$db, 'escape'], $allowedActions));
+
+		$activityConditions = [];
+		$activityConditions[] = "action IN ('$actionList')";
+		$activityConditions[] = 'actor_id = ' . (int)$user1Id;
+
+		if (!empty($user2Completed)) {
+			$activityConditions[] = '(action != "COURSE_COMPLETED" OR element_id NOT IN (' . implode(',', $user2Completed) . '))';
+		}
+
+		$query = $db->getQuery(true)
+			->update($db->quoteName('#__tjlms_activities'))
+			->set('actor_id = ' . (int)$user2Id)
+			->where(implode(' AND ', $activityConditions));
+		$db->setQuery($query)->execute();
+
+		// Step 6: Migrate certificates (skip if already issued to user2 for same course)
+		$query = $db->getQuery(true)
+			->select('client_id')
+			->from($db->quoteName('#__tj_certificate_issue'))
+			->where('user_id = ' . (int)$user2Id);
+		$db->setQuery($query);
+		$user2CertCourses = array_map('intval', $db->loadColumn());
+
+		$certExclude = !empty($user2CertCourses)
+			? ' AND client_id NOT IN (' . implode(',', $user2CertCourses) . ')'
+			: '';
+
+		$query = $db->getQuery(true)
+			->update($db->quoteName('#__tj_certificate_issue'))
+			->set('user_id = ' . (int)$user2Id)
+			->where('user_id = ' . (int)$user1Id . $certExclude);
+		$db->setQuery($query)->execute();
+
+	}
+
+	/**
+	 * Returns userid if a user exists
+	 *
+	 * @param   string  $email  The email to search on.
+	 *
+	 * @return  Object
+	 *
+	 * @since   11.1
+	 */
+	public function mergeJTUserLMSData($user1Id, $user2Id, $user2Email)
+	{
+		$db = \Joomla\CMS\Factory::getDbo();
+
+		// Get event_ids for user2
+		$query = $db->getQuery(true)
+		->select('event_id')
+		->from($db->quoteName('#__jticketing_attendees'))
+		->where('owner_id = ' . (int)$user2Id);
+		$db->setQuery($query);
+		$user2Events = array_map('intval', $db->loadColumn());
+
+
+		$eventExclude = !empty($user2Events)
+		? ' AND event_id NOT IN (' . implode(',', $user2Events) . ')'
+		: '';
+
+		$query = $db->getQuery(true)
+		->update($db->quoteName('#__jticketing_attendees'))
+		->set('owner_id = ' . (int)$user2Id)
+		->where('owner_id = ' . (int)$user1Id . $eventExclude);
+		// echo $query->dump();die;
+		$db->setQuery($query)->execute();
+
+		// Step 4: Get all attendee records for user1
+			$query = $db->getQuery(true)
+			->select(['id', 'event_id'])
+			->from($db->quoteName('#__jticketing_attendees'))
+			->where('owner_id = ' . (int) $user1Id);
+		$db->setQuery($query);
+		$user1Attendees = $db->loadObjectList();
+
+		foreach ($user1Attendees as $attendee)
+		{
+			$oldAttendeeId = (int) $attendee->id;
+			$eventId = (int) $attendee->event_id;
+	
+			// Get corresponding attendee ID for user2 for same event
+			$query = $db->getQuery(true)
+				->select('id')
+				->from($db->quoteName('#__jticketing_attendees'))
+				->where('owner_id = ' . (int) $user2Id)
+				->where('event_id = ' . $eventId);
+			$db->setQuery($query);
+			$newAttendeeId = (int) $db->loadResult();
+	
+			if ($newAttendeeId) {
+				// Check if user2 already has a check-in for this event
+				$query = $db->getQuery(true)
+					->select('COUNT(*)')
+					->from($db->quoteName('#__jticketing_checkindetails'))
+					->where('attendee_id = ' . $newAttendeeId)
+					->where('eventid = ' . $eventId);
+				$db->setQuery($query);
+				$exists = (int) $db->loadResult();
+	
+				if ($exists === 0) {
+					// Update check-in records that point to old attendee_id
+					$query = $db->getQuery(true)
+						->update($db->quoteName('#__jticketing_checkindetails'))
+						->set([
+							'attendee_id = ' . $newAttendeeId,
+							'attendee_email = ' . $db->quote($user2Email)
+						])
+						->where('attendee_id = ' . $oldAttendeeId)
+						->where('eventid = ' . $eventId);
+					$db->setQuery($query)->execute();
+				}
+			}
+		}
+
+		// Step 5: Update jticketing_attendancedetails
+		foreach ($user1Attendees as $attendee) {
+			$oldAttendeeId = (int) $attendee->id;
+			$eventId = (int) $attendee->event_id;
+
+			// Get new attendee id for user2 for same event
+			$query = $db->getQuery(true)
+				->select('id')
+				->from($db->quoteName('#__jticketing_attendees'))
+				->where('owner_id = ' . (int) $user2Id)
+				->where('event_id = ' . $eventId);
+			$db->setQuery($query);
+			$newAttendeeId = (int) $db->loadResult();
+
+			if ($newAttendeeId) {
+				// Check if user2 already has attendance entry for this event
+				$query = $db->getQuery(true)
+					->select('COUNT(*)')
+					->from($db->quoteName('#__jticketing_attendancedetails'))
+					->where('attendee_id = ' . $newAttendeeId)
+					->where('userid = ' . $user2Id);
+				$db->setQuery($query);
+				$exists = (int) $db->loadResult();
+
+				if ($exists === 0) {
+					// Update records from old attendee_id → new one
+					$query = $db->getQuery(true)
+						->update($db->quoteName('#__jticketing_attendancedetails'))
+						->set([
+							'attendee_id = ' . $newAttendeeId,
+							'userid = ' . (int) $user2Id
+						])
+						->where('attendee_id = ' . $oldAttendeeId)
+						->where('userid = ' . $user1Id);
+					$db->setQuery($query)->execute();
+				}
+			}
+		}
+	}
+
+	/**
+	 * Returns userid if a user exists
+	 *
+	 * @param   string  $email  The email to search on.
+	 *
+	 * @return  Object
+	 *
+	 * @since   11.1
+	 */
+	public function mergeJlikeUserLMSData($user1Id, $user2Id)
+	{
+		$db = \Joomla\CMS\Factory::getDbo();
+		// Step 6: Update ttm7s_jlike_todos
+		$query = $db->getQuery(true)
+		->select(['id', 'content_id'])
+		->from($db->quoteName('#__jlike_todos'))
+		->where('assigned_to = ' . (int) $user1Id);
+		$db->setQuery($query);
+		$todos = $db->loadObjectList();
+
+		foreach ($todos as $todo) {
+			$todoId = (int) $todo->id;
+			$contentId = (int) $todo->content_id;
+
+			// Check if user2 already has this content_id assigned
+			$query = $db->getQuery(true)
+				->select('COUNT(*)')
+				->from($db->quoteName('#__jlike_todos'))
+				->where('assigned_to = ' . (int) $user2Id)
+				->where('content_id = ' . $contentId);
+			$db->setQuery($query);
+			$exists = (int) $db->loadResult();
+
+			if ($exists === 0) {
+				// Safe to update
+				$query = $db->getQuery(true)
+					->update($db->quoteName('#__jlike_todos'))
+					->set('assigned_to = ' . (int) $user2Id)
+					->where('id = ' . $todoId);
+				$db->setQuery($query)->execute();
+			}
+		}
+
+		// Final Step: Block user1 account in users table
+		$query = $db->getQuery(true)
+			->update($db->quoteName('#__users'))
+			->set($db->quoteName('block') . ' = 1')
+			->where($db->quoteName('id') . ' = ' . (int)$user1Id);
+		$db->setQuery($query)->execute();
+	}
 }
